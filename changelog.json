@@ -1,0 +1,9 @@
+{
+  "entries": [
+    {
+      "sha": "c270958e1835fe4cbcfe0a6b5c1f8ebdafcb27fb",
+      "runNumber": 2,
+      "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]"
+    }
+  ]
+}
