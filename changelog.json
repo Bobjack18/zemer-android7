@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "sha": "4ca33ba07b46c2f456d279ec349073db930d4b46",
+      "runNumber": 10,
+      "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]"
+    },
+    {
       "sha": "864ee9b30789f6068ed3ba04b60aa87aed4d7905",
       "runNumber": 6,
       "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]"
