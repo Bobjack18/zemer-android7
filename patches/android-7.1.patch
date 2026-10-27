@@ -1,0 +1,414 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index b5d71f2..4abbb3a 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -20,7 +20,7 @@ android {
+ 
+     defaultConfig {
+         applicationId = "com.jtech.zemer"
+-        minSdk = 26
++        minSdk = 25
+         targetSdk = 36
+         versionCode = 38
+         versionName = "38"
+@@ -70,6 +70,9 @@ android {
+             storePassword = "android"
+             keyAlias = "androiddebugkey"
+             keyPassword = "android"
++            // Signature-scheme insurance for old (Android 7.x) firmware.
++            enableV1Signing = true
++            enableV2Signing = true
+         }
+         create("release") {
+             storeFile = file("keystore/release.keystore")
+@@ -77,6 +80,8 @@ android {
+             keyAlias = System.getenv("KEY_ALIAS")
+             keyPassword = System.getenv("KEY_PASSWORD")
+             storeType = "PKCS12"
++            enableV1Signing = true
++            enableV2Signing = true
+         }
+         getByName("debug") {
+             keyAlias = "androiddebugkey"
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 4610bca..ee60e37 100755
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -31,8 +31,9 @@
+         android:name="android.hardware.microphone"
+         android:required="false" />
+ 
+-    <!-- Shizuku libraries declare minSdk 23/24 variants; safe on our minSdk 26 -->
+-    <uses-sdk tools:overrideLibrary="rikka.shizuku.api, rikka.shizuku.provider, rikka.shizuku.shared, rikka.shizuku.aidl" />
++    <!-- Shizuku libraries declare minSdk 23/24 variants; safe on our minSdk 25. -->
++    <!-- FCast sender SDK declares minSdk 26; casting is gated off below 26 at runtime. -->
++    <uses-sdk tools:overrideLibrary="rikka.shizuku.api, rikka.shizuku.provider, rikka.shizuku.shared, rikka.shizuku.aidl, org.fcast.sender_sdk" />
+ 
+     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+ 
+diff --git a/app/src/main/kotlin/com/jtech/zemer/App.kt b/app/src/main/kotlin/com/jtech/zemer/App.kt
+index 2d800a8..b19f192 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/App.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/App.kt
+@@ -80,18 +80,25 @@ class App : Application(), SingletonImageLoader.Factory {
+ 
+         // Initialize Timber for logging. The Crashlytics tree runs in all builds:
+         // every DEBUG+ log becomes a crash-report breadcrumb, ERROR throwables become
+-        // non-fatal issues.
+-        Timber.plant(
+-            CrashReportingTree(
+-                logBreadcrumb = { FirebaseCrashlytics.getInstance().log(it) },
+-                recordNonFatal = { FirebaseCrashlytics.getInstance().recordException(it) },
++        // non-fatal issues. Crashlytics needs a live FirebaseApp; on devices without real
++        // Google Play services (microG, de-Googled ROMs) that can be unavailable, and a
++        // missing reporter must never take the app down at startup.
++        val crashlytics = runCatching { FirebaseCrashlytics.getInstance() }.getOrNull()
++        if (crashlytics != null) {
++            Timber.plant(
++                CrashReportingTree(
++                    logBreadcrumb = { crashlytics.log(it) },
++                    recordNonFatal = { crashlytics.recordException(it) },
++                )
+             )
+-        )
+-        // Every main build ships as the same versionCode/versionName (nightly = stable's number), so
+-        // Crashlytics buckets nightly and stable together; the commit + CI run number keys are what
+-        // tell them apart (run number 0 = built outside CI).
+-        FirebaseCrashlytics.getInstance().setCustomKey("commit", BuildConfig.COMMIT_HASH)
+-        FirebaseCrashlytics.getInstance().setCustomKey("run_number", BuildConfig.RUN_NUMBER)
++            // Every main build ships as the same versionCode/versionName (nightly = stable's number), so
++            // Crashlytics buckets nightly and stable together; the commit + CI run number keys are what
++            // tell them apart (run number 0 = built outside CI).
++            crashlytics.setCustomKey("commit", BuildConfig.COMMIT_HASH)
++            crashlytics.setCustomKey("run_number", BuildConfig.RUN_NUMBER)
++        } else {
++            Timber.w("Crashlytics unavailable; continuing without crash reporting")
++        }
+         if (BuildConfig.DEBUG) {
+             Timber.plant(Timber.DebugTree())
+             // Ring-buffer tree for the developer-mode Log viewer. Debug builds ONLY —
+@@ -200,7 +207,9 @@ class App : Application(), SingletonImageLoader.Factory {
+         val settings = dataStore.data.first()
+         if (settings[CheckForUpdatesKey] != true) return
+ 
+-        when (val result = UpdateChecker.checkForUpdates(settings[NightlyUpdatesKey] == true)) {
++        // This port's update channel is the Android 7.1 feed (see NightlyUpdates.API_URL), so it is
++        // on unless the user explicitly turned it off.
++        when (val result = UpdateChecker.checkForUpdates(settings[NightlyUpdatesKey] != false)) {
+             is UpdateChecker.UpdateResult.UpdateAvailable -> {
+                 pendingUpdate.value =
+                     PendingUpdate(result.latestVersion, result.notes, result.isNightly)
+diff --git a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
+index df719bc..81a635b 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
+@@ -949,22 +949,20 @@ class MainActivity : ComponentActivity() {
+                                 pendingUpdateNotes = update.notes
+                                 pendingUpdateIsNightly = update.isNightly
+                                 if (update.isNightly) {
+-                                    // Nightlies land with every push to main — a modal dialog per
+-                                    // launch would be relentless. Announce each build once, as a
+-                                    // quiet snackbar whose action opens the full update dialog.
+-                                    if (dataStore.get(LastNightlyAnnouncedKey, "") == update.version) return@collect
+-                                    Timber.d("Nightly update snackbar: ${update.version}")
+-                                    val action = snackbarHostState.showSnackbar(
+-                                        message = getString(R.string.nightly_update_available, update.version),
+-                                        actionLabel = getString(R.string.update_action),
+-                                        withDismissAction = true,
+-                                        duration = SnackbarDuration.Long,
+-                                    )
+-                                    // Marked announced only after the snackbar was actually shown,
+-                                    // so a launch that never displayed it doesn't swallow the build.
+-                                    dataStore.edit { it[LastNightlyAnnouncedKey] = update.version }
+-                                    if (action == SnackbarResult.ActionPerformed) {
+-                                        showUpdateDialog = true
++                                    // This port's nightly feed is its own update channel, so a
++                                    // detected build downloads on its own: the dialog shows the
++                                    // progress, and the download-completion effect below hands the
++                                    // verified APK to the configured installer.
++                                    Timber.d("Nightly update ${update.version}: downloading automatically")
++                                    showUpdateDialog = true
++                                    installError = null
++                                    downloadState =
++                                        com.jtech.zemer.utils.UpdateChecker.DownloadState.Downloading(0f)
++                                    downloadJob?.cancel()
++                                    downloadJob = updateScope.launch {
++                                        com.jtech.zemer.utils.UpdateChecker
++                                            .downloadUpdate(this@MainActivity, nightly = true)
++                                            .collect { state -> downloadState = state }
+                                     }
+                                 } else {
+                                     showUpdateDialog = true
+diff --git a/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt b/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt
+index 27c63e7..15a8327 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt
+@@ -17,9 +17,13 @@ class ResumePlaybackActivity : Activity() {
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+         val intent = Intent(this, MusicService::class.java).setAction(MusicService.ACTION_RESUME_PLAYBACK)
+-        runCatching { startService(intent) }
+-            .recoverCatching { startForegroundService(intent) }
+-            .onFailure { reportException(it) }
++        runCatching {
++            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
++                startForegroundService(intent)
++            } else {
++                startService(intent)
++            }
++        }.onFailure { reportException(it) }
+         finish()
+     }
+ }
+diff --git a/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt b/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
+index 8ae74c9..504873e 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
+@@ -172,7 +172,14 @@ fun Context.isInternetConnected(): Boolean {
+             return false
+         }
+ 
+-        // For more accurate detection, try a simple socket connection
++        // A system-validated network has already proven it can reach the internet. Trust it before
++        // probing a public DNS server directly: filtered networks commonly block that probe while
++        // ordinary HTTP(S) traffic works, which used to strand the onboarding "Continue" button.
++        if (networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
++            return true
++        }
++
++        // For networks that do not report validation, try a simple socket connection
+         // This is faster than HTTP and more reliable than just checking capabilities
+         return try {
+             val socket = java.net.Socket()
+diff --git a/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt b/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
+index f3011a1..5a2b629 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
+@@ -61,7 +61,7 @@ class MediaStoreDownloadService : Service() {
+                 return
+             }
+             val intent = Intent(context, MediaStoreDownloadService::class.java)
+-            kotlin.runCatching { context.startForegroundService(intent) }
++            kotlin.runCatching { androidx.core.content.ContextCompat.startForegroundService(context, intent) }
+                 .onFailure { Timber.e(it, "Failed to start MediaStoreDownloadService") }
+         }
+     }
+@@ -147,6 +147,7 @@ class MediaStoreDownloadService : Service() {
+     }
+ 
+     private fun createNotificationChannel() {
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+         val channel = NotificationChannel(
+             NOTIFICATION_CHANNEL_ID,
+             getString(R.string.download_channel_name),
+diff --git a/app/src/main/kotlin/com/jtech/zemer/playback/MusicService.kt b/app/src/main/kotlin/com/jtech/zemer/playback/MusicService.kt
+index dc226d1..2fbbfc6 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/playback/MusicService.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/playback/MusicService.kt
+@@ -350,6 +350,10 @@ class MusicService :
+ 
+     private lateinit var audioManager: AudioManager
+     private var audioFocusRequest: AudioFocusRequest? = null
++
++    // Pre-26 audio focus uses the deprecated listener overload; the request object does not exist there.
++    @Suppress("DEPRECATION")
++    private var legacyAudioFocusListener: AudioManager.OnAudioFocusChangeListener? = null
+     private var lastAudioFocusState = AudioManager.AUDIOFOCUS_NONE
+     private var wasPlayingBeforeAudioFocusLoss = false
+     private var hasAudioFocus = false
+@@ -831,6 +835,13 @@ class MusicService :
+     }
+ 
+     private fun setupAudioFocusRequest() {
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
++            @Suppress("DEPRECATION")
++            legacyAudioFocusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
++                handleAudioFocusChange(focusChange)
++            }
++            return
++        }
+         audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+             .setAudioAttributes(
+                 android.media.AudioAttributes.Builder()
+@@ -924,12 +935,16 @@ class MusicService :
+     private fun requestAudioFocus(): Boolean {
+         if (hasAudioFocus) return true
+ 
+-        audioFocusRequest?.let { request ->
+-            val result = audioManager.requestAudioFocus(request)
+-            hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+-            return hasAudioFocus
++        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            audioFocusRequest?.let { audioManager.requestAudioFocus(it) }
++                ?: AudioManager.AUDIOFOCUS_REQUEST_FAILED
++        } else {
++            val listener = legacyAudioFocusListener ?: return false
++            @Suppress("DEPRECATION")
++            audioManager.requestAudioFocus(listener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+         }
+-        return false
++        hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
++        return hasAudioFocus
+     }
+ 
+     private fun abandonAudioFocus() {
+@@ -937,8 +952,15 @@ class MusicService :
+         // clears the flag before calling this, so a guard on hasAudioFocus would skip the actual
+         // abandon and leak the request + listener for the service's life. Abandoning a request we do
+         // not hold is a harmless no-op on the framework side.
+-        audioFocusRequest?.let { request ->
+-            audioManager.abandonAudioFocusRequest(request)
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++            audioFocusRequest?.let { request ->
++                audioManager.abandonAudioFocusRequest(request)
++            }
++        } else {
++            legacyAudioFocusListener?.let { listener ->
++                @Suppress("DEPRECATION")
++                audioManager.abandonAudioFocus(listener)
++            }
+         }
+         hasAudioFocus = false
+     }
+diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt b/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt
+index 3a07e1d..37208cc 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt
+@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
+ import android.os.Build
+ import android.util.Rational
+ import androidx.activity.ComponentActivity
++import androidx.annotation.ChecksSdkIntAtLeast
++import androidx.annotation.RequiresApi
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.fillMaxSize
+@@ -44,9 +46,12 @@ val pipAutoEnterSupported: Boolean
+     get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+ 
+ /** False on some low-RAM and TV builds, where PiP is not offered at all. */
++@get:ChecksSdkIntAtLeast(api = Build.VERSION_CODES.O)
+ private val Activity.pipAvailable: Boolean
+-    get() = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
++    get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
++        packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+ 
++@RequiresApi(Build.VERSION_CODES.O)
+ private fun videoPipParams(autoEnter: Boolean): PictureInPictureParams =
+     PictureInPictureParams.Builder()
+         .setAspectRatio(VIDEO_PIP_ASPECT)
+@@ -69,6 +74,7 @@ fun Activity.setVideoPipAutoEnter(enabled: Boolean) {
+ /** Whether the hosting Activity is currently in the PiP window. */
+ @Composable
+ fun rememberIsInPipMode(): Boolean {
++    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+     val activity = LocalContext.current as? ComponentActivity ?: return false
+     var inPip by remember(activity) { mutableStateOf(activity.isInPictureInPictureMode) }
+     DisposableEffect(activity) {
+diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/ThemeScreen.kt b/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/ThemeScreen.kt
+index f89de26..a7c5986 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/ThemeScreen.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/ThemeScreen.kt
+@@ -419,7 +419,7 @@ private fun PaletteItem(
+ 
+     // The System swatch previews the real Android 12+ wallpaper colors; the dynamic swatch is an icon
+     // (no fixed colors to show); every other swatch previews its materialKolor scheme.
+-    val colorScheme = if (isSystem && systemDynamicSupported) {
++    val colorScheme = if (isSystem && systemDynamicSupported && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+         if (isSystemDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+     } else {
+         rememberDynamicColorScheme(
+diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/UpdaterSettings.kt b/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/UpdaterSettings.kt
+index d2ea63f..620cc81 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/UpdaterSettings.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/UpdaterSettings.kt
+@@ -78,7 +78,7 @@ fun UpdaterScreen(
+     val context = LocalContext.current
+     val scope = rememberCoroutineScope()
+     val (checkForUpdates, onCheckForUpdatesChange) = rememberPreference(CheckForUpdatesKey, false)
+-    val (nightlyUpdates, onNightlyUpdatesChange) = rememberPreference(NightlyUpdatesKey, false)
++    val (nightlyUpdates, onNightlyUpdatesChange) = rememberPreference(NightlyUpdatesKey, true)
+     var showNightlyNotice by remember { mutableStateOf(false) }
+     val (installerTypeOrdinal, onInstallerTypeChange) = rememberPreference(InstallerTypeKey, InstallerType.NATIVE.ordinal)
+     val installerType = InstallerType.fromOrdinal(installerTypeOrdinal)
+diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt b/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
+index 8f95857..6509f21 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
+@@ -23,8 +23,6 @@ import kotlinx.serialization.json.jsonPrimitive
+ import timber.log.Timber
+ import java.io.File
+ import java.io.IOException
+-import java.nio.file.Files
+-import java.nio.file.StandardCopyOption
+ import java.security.MessageDigest
+ 
+ object UpdateChecker {
+@@ -298,8 +296,12 @@ object UpdateChecker {
+                     }
+             }
+             // Finalize into apkFile only after a fully-read (and, for a nightly, verified) body,
+-            // and only via an atomic move so a failure never leaves a partial apk behind.
+-            Files.move(part.toPath(), apkFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
++            // and only via an atomic rename so a failure never leaves a partial apk behind.
++            if (!part.renameTo(apkFile)) {
++                // Both files live in cacheDir, but fall back to a copy if the rename is refused.
++                part.copyTo(apkFile, overwrite = true)
++                part.delete()
++            }
+             emit(DownloadState.Downloaded(apkFile))
+         } catch (e: CancellationException) {
+             throw e // cleanup runs in finally; propagate the cancel
+diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
+index ba4c06c..40372c6 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
+@@ -195,6 +195,10 @@ object AppInstaller {
+ 
+     /** Shizuku install through the hidden PackageInstaller APIs (rikka refine). */
+     private fun installShizuku(context: Context, apkFile: File): InstallResult {
++        // The hidden PackageInstaller signature this relies on only exists from Android 8.
++        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
++            return InstallResult.Error(context.getString(R.string.shizuku_not_supported_version))
++        }
+         if (!isShizukuAlive()) {
+             return InstallResult.Error(context.getString(R.string.shizuku_not_running))
+         }
+diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
+index fe0f7ed..3721b76 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
+@@ -19,10 +19,15 @@ import kotlinx.serialization.json.longOrNull
+  * unit-testable; the network/UI flow stays in UpdateChecker.
+  */
+ object NightlyUpdates {
+-    /** The current nightly: the only input to "is there an update" and where to download it. */
+-    const val API_URL = "https://nightly.zemer.io/api"
++    /**
++     * The current nightly: the only input to "is there an update" and where to download it.
++     * This Android 7.1 port publishes its own feed (built from upstream + the port patch) in the
++     * public `Bobjack18/zemer-android7` repository; the JSON contract is the same as the official
++     * mirror's.
++     */
++    const val API_URL = "https://raw.githubusercontent.com/Bobjack18/zemer-android7/main/api.json"
+ 
+-    private const val CHANGELOG_URL = "https://nightly.zemer.io/changelog"
++    private const val CHANGELOG_URL = "https://raw.githubusercontent.com/Bobjack18/zemer-android7/main/changelog.json"
+ 
+     /** Every build between [installedSha] and the current one, newest first (the release notes). */
+     fun changelogUrl(installedSha: String): String = "$CHANGELOG_URL?since=$installedSha"
+diff --git a/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt b/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt
+index 65ea6e0..a104970 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt
+@@ -355,7 +355,9 @@ class MusicWidget : GlanceAppWidget() {
+                             val result = loader.execute(request)
+                             if (result is SuccessResult) {
+                                 val original = result.image.toBitmap()
+-                                val safe = if (original.config == Bitmap.Config.HARDWARE) {
++                                // Bitmap.Config.HARDWARE is API 26+; compare by name so this field
++                                // reference can't throw NoSuchFieldError on older platforms.
++                                val safe = if (original.config?.name == "HARDWARE") {
+                                     original.copy(Bitmap.Config.ARGB_8888, false)
+                                 } else {
+                                     original

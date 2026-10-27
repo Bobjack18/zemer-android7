@@ -1,0 +1,213 @@
+name: Android 7.1 build
+
+# Rebuilds the Android 7.1 (API 25) port whenever upstream Zemer changes, publishes a signed
+# release, and rewrites the update feed the app polls (api.json / changelog.json on main).
+#
+# Flow:
+#   1. poll upstream main; stop if it is the same commit as the last build (unless forced)
+#   2. clone upstream at that commit, apply patches/android-7.1.patch
+#   3. build + sign the release APK, publish it as release build-<run>
+#   4. commit api.json / changelog.json / state.json to main (the app's update manifest)
+#
+# The app's in-app updater reads https://raw.githubusercontent.com/<owner>/zemer-android7/main/api.json
+# and downloads the APK it names, verifying size + SHA-256 before installing.
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if upstream main has not changed
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android7-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout build repo (patch + state)
+        uses: actions/checkout@v4
+        with:
+          path: build
+
+      - name: Resolve upstream commit
+        id: up
+        run: |
+          set -euo pipefail
+          upstream=$(git ls-remote https://github.com/zemerteam/zemer-app.git refs/heads/main | cut -f1)
+          test -n "$upstream"
+          last=$(jq -r '.upstreamSha // empty' build/state.json 2>/dev/null || true)
+          echo "sha=$upstream" >> "$GITHUB_OUTPUT"
+          if [ "$upstream" = "$last" ] && [ "${{ inputs.force }}" != "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream unchanged at $upstream - nothing to build."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream $upstream (last built: ${last:-none})."
+          fi
+
+      - name: Fetch upstream source
+        if: steps.up.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none https://github.com/zemerteam/zemer-app.git src
+          git -C src checkout --detach "${{ steps.up.outputs.sha }}"
+          git -C src submodule update --init --recursive
+          git -C src config user.name "zemer-android7"
+          git -C src config user.email "actions@users.noreply.github.com"
+          # Release notes describe the UPSTREAM change that triggered this build.
+          git -C src log -1 --format=%s > upstream-subject.txt
+          git -C src log -1 --format=%b | head -c 4000 > upstream-body.txt || true
+
+      - name: Apply Android 7.1 port
+        if: steps.up.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          cd src
+          git apply -3 --whitespace=nowarn ../build/patches/android-7.1.patch
+          git add -A
+          git commit -q -m "android7: port upstream ${{ steps.up.outputs.sha }}"
+          echo "BUILT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 21
+        if: steps.up.outputs.skip == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        if: steps.up.outputs.skip == 'false'
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Set up Android SDK
+        if: steps.up.outputs.skip == 'false'
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: Project configuration
+        if: steps.up.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > src/local.properties
+          echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > src/app/google-services.json
+          mkdir -p src/app/keystore
+          echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > src/app/keystore/release.keystore
+          test -s src/app/google-services.json
+          test -s src/app/keystore/release.keystore
+
+      - name: Assemble signed release
+        if: steps.up.outputs.skip == 'false'
+        working-directory: src
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify signature + collect metadata
+        if: steps.up.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          APK=src/app/build/outputs/apk/release/app-release.apk
+          test -f "$APK"
+          BUILD_TOOLS=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" > /dev/null
+          {
+            echo "APK=$APK"
+            echo "APK_SIZE=$(stat -c%s "$APK")"
+            echo "APK_SHA256=$(sha256sum "$APK" | cut -d' ' -f1)"
+          } >> "$GITHUB_ENV"
+          ls -l "$APK"
+          sha256sum "$APK"
+
+      - name: Upload workflow artifact
+        if: steps.up.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zemer-android7-${{ github.run_number }}
+          path: src/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+      - name: Publish GitHub release
+        if: steps.up.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="build-${GITHUB_RUN_NUMBER}"
+          SUBJECT=$(cat upstream-subject.txt)
+          gh release create "$TAG" "$APK" \
+            --title "Zemer Android 7.1 build ${{ github.run_number }}" \
+            --notes "Android 7.1 (API 25) port of upstream \`${{ steps.up.outputs.sha }}\`.
+
+          Upstream change: $SUBJECT" \
+            --latest
+
+      - name: Publish update manifest
+        if: steps.up.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          SUBJECT=$(cat upstream-subject.txt)
+          BODY=$(cat upstream-body.txt)
+          MESSAGE=$(printf '%s' "$SUBJECT"; if [ -n "$BODY" ]; then printf '\n\n%s' "$BODY"; fi)
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/build-${GITHUB_RUN_NUMBER}/app-release.apk"
+
+          jq -n \
+            --arg sha "$BUILT_SHA" \
+            --argjson runNumber "$GITHUB_RUN_NUMBER" \
+            --arg commitMessage "$MESSAGE" \
+            --argjson size "$APK_SIZE" \
+            --arg sha256 "$APK_SHA256" \
+            --arg downloadUrl "$URL" \
+            '{sha: $sha, runNumber: $runNumber, commitMessage: $commitMessage, size: $size, sha256: $sha256, downloadUrl: $downloadUrl}' \
+            > build/api.json
+
+          if [ -f build/changelog.json ]; then
+            jq --arg sha "$BUILT_SHA" --argjson runNumber "$GITHUB_RUN_NUMBER" --arg message "$SUBJECT" \
+              '{entries: ([{sha: $sha, runNumber: $runNumber, commitMessage: $message}] + ((.entries // []) | map(select(.sha != $sha))))[:50]}' \
+              build/changelog.json > /tmp/changelog.json
+            mv /tmp/changelog.json build/changelog.json
+          else
+            jq -n --arg sha "$BUILT_SHA" --argjson runNumber "$GITHUB_RUN_NUMBER" --arg message "$SUBJECT" \
+              '{entries: [{sha: $sha, runNumber: $runNumber, commitMessage: $message}]}' \
+              > build/changelog.json
+          fi
+
+          jq -n \
+            --arg upstreamSha "${{ steps.up.outputs.sha }}" \
+            --arg builtSha "$BUILT_SHA" \
+            --argjson runNumber "$GITHUB_RUN_NUMBER" \
+            --arg builtAt "$(date -u +%FT%TZ)" \
+            '{upstreamSha: $upstreamSha, builtSha: $builtSha, runNumber: $runNumber, builtAt: $builtAt}' \
+            > build/state.json
+
+          cat build/api.json
+
+      - name: Commit manifest
+        if: steps.up.outputs.skip == 'false'
+        working-directory: build
+        run: |
+          set -euo pipefail
+          git config user.name "zemer-android7"
+          git config user.email "actions@users.noreply.github.com"
+          git add api.json changelog.json state.json
+          git commit -m "ci: publish build-${GITHUB_RUN_NUMBER} for ${{ steps.up.outputs.sha }} [skip ci]"
+
+          # Another run may have pushed while this one was building; rebase once before retrying.
+          git push || { git pull --rebase && git push; }
