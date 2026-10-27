@@ -7,10 +7,17 @@ name: Android 7.1 build
 #   1. poll upstream main; stop if it is the same commit as the last build (unless forced)
 #   2. clone upstream at that commit, apply patches/android-7.1.patch
 #   3. build + sign the release APK, publish it as release build-<run>
-#   4. commit api.json / changelog.json / state.json to main (the app's update manifest)
+#   4. publish the APK on the `apk` branch under its SHA-256 (the updater's download host)
+#   5. commit api.json / changelog.json / state.json to main (the app's update manifest)
 #
 # The app's in-app updater reads https://raw.githubusercontent.com/<owner>/zemer-android7/main/api.json
 # and downloads the APK it names, verifying size + SHA-256 before installing.
+#
+# Why the APK lives on the `apk` branch and not only in the release: the release CDN
+# (release-assets.githubusercontent.com) is unreachable from some networks - a filtered device
+# drops it mid-transfer - while raw.githubusercontent.com (the host the manifest itself comes from)
+# works. The file name is the artifact's SHA-256, so the URL is content-addressed and can never
+# serve stale bytes.
 
 on:
   schedule:
@@ -159,6 +166,28 @@ jobs:
           Upstream change: $SUBJECT" \
             --latest
 
+      - name: Publish the APK for the in-app updater
+        if: steps.up.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Content-addressed artifact on its own branch: the app downloads it from
+          # raw.githubusercontent.com (reachable where the release CDN is not), and the SHA-256
+          # file name means the URL can never serve different bytes.
+          rm -rf /tmp/apkwork
+          git clone --depth 1 "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" /tmp/apkwork
+          cd /tmp/apkwork
+          git config user.name "zemer-android7"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout --orphan apk
+          git rm -rf --cached . > /dev/null
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+          cp "$APK" "./${APK_SHA256}.apk"
+          git add "./${APK_SHA256}.apk"
+          git commit -q -m "apk: build ${GITHUB_RUN_NUMBER} (${APK_SHA256})"
+          git push --force origin apk
+
       - name: Publish update manifest
         if: steps.up.outputs.skip == 'false'
         run: |
@@ -166,7 +195,7 @@ jobs:
           SUBJECT=$(cat upstream-subject.txt)
           BODY=$(cat upstream-body.txt)
           MESSAGE=$(printf '%s' "$SUBJECT"; if [ -n "$BODY" ]; then printf '\n\n%s' "$BODY"; fi)
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/build-${GITHUB_RUN_NUMBER}/app-release.apk"
+          URL="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/apk/${APK_SHA256}.apk"
 
           jq -n \
             --arg sha "$BUILT_SHA" \
