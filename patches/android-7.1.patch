@@ -609,3 +609,20 @@ index 0000000..826d06a
 +        )
 +    }
 +}
+diff --git a/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt b/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt
+index eec65c5..25f0d73 100644
+--- a/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt
++++ b/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt
+@@ -176,8 +176,11 @@ class NightlyUpdatesTest {
+ 
+     @Test
+     fun `changelog url asks for the gap since the installed commit`() {
++        // The Android 7.1 port publishes its own feed, so the changelog host is the port's raw
++        // manifest host - the query still carries the installed commit.
+         assertEquals(
+-            "https://nightly.zemer.io/changelog?since=4a3d242079f43d96ad504683128d425bd583ee3a",
++            "https://raw.githubusercontent.com/Bobjack18/zemer-android7/main/changelog.json" +
++                "?since=4a3d242079f43d96ad504683128d425bd583ee3a",
+             NightlyUpdates.changelogUrl("4a3d242079f43d96ad504683128d425bd583ee3a"),
+         )
+     }

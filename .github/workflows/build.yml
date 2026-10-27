@@ -170,6 +170,7 @@ jobs:
         if: steps.up.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # Content-addressed artifact on its own branch: the app downloads it from
