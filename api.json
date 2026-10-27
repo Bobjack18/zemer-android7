@@ -1,8 +1,8 @@
 {
-  "sha": "0c06521e6207d99253a44984cd3da6046e0bc8e9",
-  "runNumber": 3,
+  "sha": "864ee9b30789f6068ed3ba04b60aa87aed4d7905",
+  "runNumber": 6,
   "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]",
-  "size": 14694823,
-  "sha256": "5327b4f0c018927406f4386d90190ac5169822a9b3ac82ec352eb032fbc67ae0",
-  "downloadUrl": "https://github.com/Bobjack18/zemer-android7/releases/download/build-3/app-release.apk"
+  "size": 14694827,
+  "sha256": "21b0a6e8aa8c000469799fb3b30758a2aca4f5555c0f6a865c15112efb18cf04",
+  "downloadUrl": "https://github.com/Bobjack18/zemer-android7/releases/download/build-6/app-release.apk"
 }
