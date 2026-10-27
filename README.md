@@ -13,7 +13,8 @@ Automated signed builds of [Zemer](https://github.com/zemerteam/zemer-app) for A
    the whole port: `minSdk 25`, core-library desugaring, and the `Build.VERSION` guards for
    PiP / notification channels / `java.nio.file` / Shizuku / dynamic color / audio focus.
 4. Builds and signs the release APK, publishes it as release `build-<run>`.
-5. Rewrites `api.json` (the update feed), `changelog.json` and `state.json` on `main`.
+5. Publishes the same APK on the `apk` branch under its SHA-256 (`apk/<sha256>.apk`).
+6. Rewrites `api.json` (the update feed), `changelog.json` and `state.json` on `main`.
 
 ## In-app updates
 
@@ -21,6 +22,17 @@ The port's updater (`NightlyUpdates.API_URL`) points at
 `https://raw.githubusercontent.com/Bobjack18/zemer-android7/main/api.json`, so a running install
 checks on launch, downloads the APK named there automatically, verifies its size + SHA-256 against
 `api.json`, and hands it to the configured installer (Settings → Updater: Native / Root / Shizuku).
+
+The download URL is content-addressed:
+`https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/<sha256>.apk`. It is served from
+`raw.githubusercontent.com` rather than the release asset CDN (`release-assets.githubusercontent.com`),
+which some networks drop mid-transfer — the phone this port was tested on did exactly that. Because
+the file name is the artifact's SHA-256, the URL can never serve different bytes, and a stale CDN
+entry is harmless.
+
+The first check on launch is retried (3 attempts, 30 s apart) and the check also runs again
+whenever the app returns to the foreground (throttled to 15 min, but always immediately if no check
+has ever completed), so a device that starts offline still picks the update up later.
 
 The manifest's `sha` is the commit this APK was built from, and `runNumber` is the workflow run
 number — an update is offered only when both the commit differs and the run number is newer, so a
