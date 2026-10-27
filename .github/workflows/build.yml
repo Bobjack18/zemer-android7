@@ -131,7 +131,8 @@ jobs:
         if: steps.up.outputs.skip == 'false'
         run: |
           set -euo pipefail
-          APK=src/app/build/outputs/apk/release/app-release.apk
+          # Absolute path: later steps run from other directories.
+          APK="$GITHUB_WORKSPACE/src/app/build/outputs/apk/release/app-release.apk"
           test -f "$APK"
           BUILD_TOOLS=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" > /dev/null
