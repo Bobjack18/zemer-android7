@@ -47,10 +47,44 @@ index 4610bca..ee60e37 100755
      <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
  
 diff --git a/app/src/main/kotlin/com/jtech/zemer/App.kt b/app/src/main/kotlin/com/jtech/zemer/App.kt
-index 2d800a8..b19f192 100644
+index 2d800a8..0ce9590 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/App.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/App.kt
-@@ -80,18 +80,25 @@ class App : Application(), SingletonImageLoader.Factory {
+@@ -1,10 +1,12 @@
+ package com.jtech.zemer
+ 
++import android.app.Activity
+ import android.app.Application
+ import android.app.NotificationChannel
+ import android.app.NotificationManager
+ import android.content.Context
+ import android.os.Build
++import android.os.Bundle
+ import android.util.Log
+ import android.webkit.CookieManager
+ import androidx.datastore.preferences.core.edit
+@@ -45,6 +47,7 @@ import com.jtech.zemer.utils.dataStore
+ import com.jtech.zemer.utils.get
+ import com.jtech.zemer.utils.reportException
+ import com.jtech.zemer.utils.WhitelistFetcher
++import com.jtech.zemer.utils.updater.AutoUpdatePolicy
+ import com.metrolist.innertube.utils.ResilientDns
+ import com.metrolist.innertube.utils.parseCookieString
+ import dagger.hilt.android.HiltAndroidApp
+@@ -75,23 +78,38 @@ class App : Application(), SingletonImageLoader.Factory {
+     @Inject
+     lateinit var databaseLazy: dagger.Lazy<MusicDatabase>
+ 
++    /** True while an update-check round is in flight, so a foreground return cannot double-check. */
++    @Volatile
++    private var updateCheckRunning = false
++
++    /** When the last update check produced a definitive answer (0 = never). */
++    @Volatile
++    private var lastCompletedUpdateCheckAtMs = 0L
++
+     override fun onCreate() {
+         super.onCreate()
  
          // Initialize Timber for logging. The Crashlytics tree runs in all builds:
          // every DEBUG+ log becomes a crash-report breadcrumb, ERROR throwables become
@@ -87,17 +121,92 @@ index 2d800a8..b19f192 100644
          if (BuildConfig.DEBUG) {
              Timber.plant(Timber.DebugTree())
              // Ring-buffer tree for the developer-mode Log viewer. Debug builds ONLY —
-@@ -200,7 +207,9 @@ class App : Application(), SingletonImageLoader.Factory {
+@@ -194,18 +212,80 @@ class App : Application(), SingletonImageLoader.Factory {
+                 Timber.d("App: IsraeliArtistRegistry pre-loaded")
+             }
+         }
++
++        // Foreground re-check: the cold-start check can run before the network is usable, and a
++        // failed check is silently dropped - so every return to the foreground may start a fresh
++        // round (throttled by AutoUpdatePolicy). Counted from the activity lifecycle because the
++        // project has no process-lifecycle dependency.
++        var startedActivities = 0
++        registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
++            override fun onActivityStarted(activity: Activity) {
++                if (startedActivities++ == 0) {
++                    applicationScope.launch { checkForUpdatesOnForeground() }
++                }
++            }
++
++            override fun onActivityStopped(activity: Activity) {
++                startedActivities--
++            }
++
++            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
++            override fun onActivityResumed(activity: Activity) = Unit
++            override fun onActivityPaused(activity: Activity) = Unit
++            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
++            override fun onActivityDestroyed(activity: Activity) = Unit
++        })
+     }
+ 
+     private suspend fun checkForUpdatesOnStartup() {
          val settings = dataStore.data.first()
          if (settings[CheckForUpdatesKey] != true) return
++        performUpdateCheck(nightly = settings[NightlyUpdatesKey] != false)
++    }
  
 -        when (val result = UpdateChecker.checkForUpdates(settings[NightlyUpdatesKey] == true)) {
-+        // This port's update channel is the Android 7.1 feed (see NightlyUpdates.API_URL), so it is
-+        // on unless the user explicitly turned it off.
-+        when (val result = UpdateChecker.checkForUpdates(settings[NightlyUpdatesKey] != false)) {
-             is UpdateChecker.UpdateResult.UpdateAvailable -> {
-                 pendingUpdate.value =
-                     PendingUpdate(result.latestVersion, result.notes, result.isNightly)
+-            is UpdateChecker.UpdateResult.UpdateAvailable -> {
+-                pendingUpdate.value =
+-                    PendingUpdate(result.latestVersion, result.notes, result.isNightly)
++    /**
++     * A return to the foreground may start a fresh check round. The cold-start check often runs
++     * before the network is usable, and a failed check is silently dropped - so without this the
++     * session could end with no update offered even though the device is online minutes later.
++     */
++    private suspend fun checkForUpdatesOnForeground() {
++        val now = System.currentTimeMillis()
++        if (!AutoUpdatePolicy.shouldRecheckOnResume(lastCompletedUpdateCheckAtMs, now)) return
++        val settings = dataStore.data.first()
++        if (settings[CheckForUpdatesKey] != true) return
++        performUpdateCheck(nightly = settings[NightlyUpdatesKey] != false)
++    }
++
++    /**
++     * One check round: the check itself, retried while it keeps failing (the network is often not
++     * ready yet at cold start), and - when it succeeds - the update handed to the UI.
++     */
++    private suspend fun performUpdateCheck(nightly: Boolean) {
++        if (updateCheckRunning) return
++        updateCheckRunning = true
++        try {
++            var attempts = 0
++            while (true) {
++                attempts++
++                val result = UpdateChecker.checkForUpdates(nightly)
++                if (result is UpdateChecker.UpdateResult.Error) {
++                    if (AutoUpdatePolicy.shouldRetry(attempts)) {
++                        delay(AutoUpdatePolicy.RETRY_DELAY_MS)
++                        continue
++                    }
++                    // Out of attempts: leave the last completed-check stamp untouched, so the next
++                    // foreground return is free to try again.
++                    return
++                }
++                lastCompletedUpdateCheckAtMs = System.currentTimeMillis()
++                if (result is UpdateChecker.UpdateResult.UpdateAvailable) {
++                    pendingUpdate.value =
++                        PendingUpdate(result.latestVersion, result.notes, result.isNightly)
++                }
++                return
+             }
+-            else -> { /* No action needed */ }
++        } finally {
++            updateCheckRunning = false
+         }
+     }
+ 
 diff --git a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
 index df719bc..81a635b 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
@@ -374,6 +483,46 @@ index ba4c06c..40372c6 100644
          if (!isShizukuAlive()) {
              return InstallResult.Error(context.getString(R.string.shizuku_not_running))
          }
+diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt
+new file mode 100644
+index 0000000..bbe4c6b
+--- /dev/null
++++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt
+@@ -0,0 +1,34 @@
++package com.jtech.zemer.utils.updater
++
++/**
++ * When the automatic update check runs, and how a failed attempt is retried.
++ *
++ * A cold-start check often runs before the network is usable (the device just woke, Wi-Fi is still
++ * associating, DNS is cold): the check then fails, and because a failed check is not an update,
++ * the session would end with nothing offered until the next launch. So a failed attempt is retried
++ * a couple of times, and every return to the foreground may start a fresh round - the throttle is
++ * based on the last check that actually COMPLETED, so a failed round never silences the next one.
++ *
++ * Pure policy, unit-tested.
++ */
++object AutoUpdatePolicy {
++    /** Attempts in one round: the first try plus two retries. */
++    const val MAX_ATTEMPTS = 3
++
++    /** Pause between a failed attempt and the next one. */
++    const val RETRY_DELAY_MS = 30_000L
++
++    /** Minimum gap between two rounds started by the app returning to the foreground. */
++    const val RESUME_RECHECK_INTERVAL_MS = 15 * 60 * 1000L
++
++    /** Whether another attempt follows after [attempts] failed attempts (1-based). */
++    fun shouldRetry(attempts: Int): Boolean = attempts < MAX_ATTEMPTS
++
++    /**
++     * Whether a foreground return may start a new round. [lastCompletedAtMs] is the time of the
++     * last check that produced a definitive answer (0 = none yet): a session whose checks all
++     * failed must be allowed to try again immediately.
++     */
++    fun shouldRecheckOnResume(lastCompletedAtMs: Long, nowMs: Long): Boolean =
++        lastCompletedAtMs <= 0L || nowMs - lastCompletedAtMs >= RESUME_RECHECK_INTERVAL_MS
++}
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
 index fe0f7ed..3721b76 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
@@ -412,3 +561,51 @@ index 65ea6e0..a104970 100644
                                      original.copy(Bitmap.Config.ARGB_8888, false)
                                  } else {
                                      original
+diff --git a/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt b/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt
+new file mode 100644
+index 0000000..826d06a
+--- /dev/null
++++ b/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt
+@@ -0,0 +1,42 @@
++package com.jtech.zemer.utils.updater
++
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++/**
++ * Pure coverage of the automatic update-check policy: how many attempts one round makes, and when
++ * a return to the foreground may start a new one.
++ */
++class AutoUpdatePolicyTest {
++
++    @Test
++    fun `a round retries until the attempt budget is spent`() {
++        assertTrue(AutoUpdatePolicy.shouldRetry(1))
++        assertTrue(AutoUpdatePolicy.shouldRetry(AutoUpdatePolicy.MAX_ATTEMPTS - 1))
++        assertFalse(AutoUpdatePolicy.shouldRetry(AutoUpdatePolicy.MAX_ATTEMPTS))
++        assertFalse(AutoUpdatePolicy.shouldRetry(AutoUpdatePolicy.MAX_ATTEMPTS + 1))
++    }
++
++    @Test
++    fun `a foreground return rechecks while no check has completed`() {
++        assertTrue(AutoUpdatePolicy.shouldRecheckOnResume(0L, 1_000L))
++    }
++
++    @Test
++    fun `a foreground return rechecks only after the interval`() {
++        val last = 10_000L
++        assertFalse(
++            AutoUpdatePolicy.shouldRecheckOnResume(
++                last,
++                last + AutoUpdatePolicy.RESUME_RECHECK_INTERVAL_MS - 1,
++            ),
++        )
++        assertTrue(
++            AutoUpdatePolicy.shouldRecheckOnResume(
++                last,
++                last + AutoUpdatePolicy.RESUME_RECHECK_INTERVAL_MS,
++            ),
++        )
++    }
++}
