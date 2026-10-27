@@ -152,7 +152,7 @@ jobs:
           set -euo pipefail
           TAG="build-${GITHUB_RUN_NUMBER}"
           SUBJECT=$(cat upstream-subject.txt)
-          gh release create "$TAG" "$APK" \
+          gh release create "$TAG" "$APK" -R "$GITHUB_REPOSITORY" \
             --title "Zemer Android 7.1 build ${{ github.run_number }}" \
             --notes "Android 7.1 (API 25) port of upstream \`${{ steps.up.outputs.sha }}\`.
 
