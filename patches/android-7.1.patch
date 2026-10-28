@@ -208,10 +208,10 @@ index 2d800a8..0ce9590 100644
      }
  
 diff --git a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
-index df719bc..81a635b 100644
+index df719bc..c413aa9 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
-@@ -949,22 +949,20 @@ class MainActivity : ComponentActivity() {
+@@ -949,22 +949,23 @@ class MainActivity : ComponentActivity() {
                                  pendingUpdateNotes = update.notes
                                  pendingUpdateIsNightly = update.isNightly
                                  if (update.isNightly) {
@@ -242,12 +242,33 @@ index df719bc..81a635b 100644
 +                                        com.jtech.zemer.utils.UpdateChecker.DownloadState.Downloading(0f)
 +                                    downloadJob?.cancel()
 +                                    downloadJob = updateScope.launch {
-+                                        com.jtech.zemer.utils.UpdateChecker
-+                                            .downloadUpdate(this@MainActivity, nightly = true)
-+                                            .collect { state -> downloadState = state }
++                                        // Retries by itself: a dropped connection or an exhausted
++                                        // heap must not leave the update stuck behind an error.
++                                        com.jtech.zemer.utils.updater.downloadUpdateWithRetries(
++                                            context = this@MainActivity,
++                                            nightly = true,
++                                        ).collect { state -> downloadState = state }
                                      }
                                  } else {
                                      showUpdateDialog = true
+@@ -1005,10 +1006,14 @@ class MainActivity : ComponentActivity() {
+                                 onDownload = {
+                                     downloadState = com.jtech.zemer.utils.UpdateChecker.DownloadState.Downloading(0f)
+                                     installError = null
++                                    // The automatic download may still be waiting to retry; the
++                                    // user's own attempt takes over from it.
++                                    downloadJob?.cancel()
+                                     downloadJob = updateScope.launch {
+-                                        com.jtech.zemer.utils.UpdateChecker.downloadUpdate(this@MainActivity, pendingUpdateIsNightly).collect { state ->
+-                                            downloadState = state
+-                                        }
++                                        com.jtech.zemer.utils.updater.downloadUpdateWithRetries(
++                                            context = this@MainActivity,
++                                            nightly = pendingUpdateIsNightly,
++                                        ).collect { state -> downloadState = state }
+                                     }
+                                 },
+                                 onCancelDownload = {
 diff --git a/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt b/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt
 index 27c63e7..15a8327 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt
@@ -379,6 +400,17 @@ index dc226d1..2fbbfc6 100644
          }
          hasAudioFocus = false
      }
+diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/component/UpdateDownloadDialog.kt b/app/src/main/kotlin/com/jtech/zemer/ui/component/UpdateDownloadDialog.kt
+index 3fea872..c8c5737 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/ui/component/UpdateDownloadDialog.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/ui/component/UpdateDownloadDialog.kt
+@@ -263,5 +263,6 @@ private fun UpdateDownloadFailure.messageRes(): Int = when (this) {
+     UpdateDownloadFailure.NETWORK -> R.string.update_error_network
+     UpdateDownloadFailure.STORAGE -> R.string.update_error_storage
+     UpdateDownloadFailure.CORRUPT_ARTIFACT -> R.string.update_error_corrupt
++    UpdateDownloadFailure.MEMORY -> R.string.update_error_memory
+     UpdateDownloadFailure.UNKNOWN -> R.string.update_error_unknown
+ }
 diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt b/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt
 index 3a07e1d..37208cc 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt
@@ -441,7 +473,7 @@ index d2ea63f..620cc81 100644
      val (installerTypeOrdinal, onInstallerTypeChange) = rememberPreference(InstallerTypeKey, InstallerType.NATIVE.ordinal)
      val installerType = InstallerType.fromOrdinal(installerTypeOrdinal)
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt b/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
-index 8f95857..6509f21 100644
+index 8f95857..b9d93b8 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
 @@ -23,8 +23,6 @@ import kotlinx.serialization.json.jsonPrimitive
@@ -453,7 +485,7 @@ index 8f95857..6509f21 100644
  import java.security.MessageDigest
  
  object UpdateChecker {
-@@ -298,8 +296,12 @@ object UpdateChecker {
+@@ -298,11 +296,21 @@ object UpdateChecker {
                      }
              }
              // Finalize into apkFile only after a fully-read (and, for a nightly, verified) body,
@@ -468,6 +500,15 @@ index 8f95857..6509f21 100644
              emit(DownloadState.Downloaded(apkFile))
          } catch (e: CancellationException) {
              throw e // cleanup runs in finally; propagate the cancel
++        } catch (e: OutOfMemoryError) {
++            // An Error, not an Exception: it would escape the catch above and kill the process
++            // (a small-RAM device can exhaust its heap mid-transfer). The download is reported as
++            // a failed attempt instead - the caller may retry it when memory is available again.
++            Timber.w(e, "Update download ran out of memory")
++            emit(DownloadState.Error("Out of memory", UpdateDownloadFailure.MEMORY))
+         } catch (e: Exception) {
+             Timber.w(e, "Update download failed")
+             emit(DownloadState.Error(e.message ?: "Download failed", classifyUpdateDownloadFailure(e)))
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
 index ba4c06c..40372c6 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
@@ -483,12 +524,55 @@ index ba4c06c..40372c6 100644
          if (!isShizukuAlive()) {
              return InstallResult.Error(context.getString(R.string.shizuku_not_running))
          }
+diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdateDownload.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdateDownload.kt
+new file mode 100644
+index 0000000..9e56a86
+--- /dev/null
++++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdateDownload.kt
+@@ -0,0 +1,37 @@
++package com.jtech.zemer.utils.updater
++
++import android.content.Context
++import com.jtech.zemer.utils.UpdateChecker
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.flow.Flow
++import kotlinx.coroutines.flow.flow
++
++/**
++ * The update download, with automatic retries.
++ *
++ * A detected build downloads on its own (the dialog only shows the progress), so a failed
++ * transfer must not end the story with the user staring at an error: the download is retried a
++ * couple of times. That covers the failures a small-RAM device hits - a dropped connection, or a
++ * heap exhausted mid-transfer - which usually clear by the time the next attempt starts. A corrupt
++ * artifact is never retried (the bytes on the wire do not match the announced build).
++ *
++ * The retry decision itself is pure policy ([AutoUpdatePolicy.shouldRetryDownload]); this is the
++ * thin flow that applies it.
++ */
++fun downloadUpdateWithRetries(
++    context: Context,
++    nightly: Boolean = false,
++): Flow<UpdateChecker.DownloadState> = flow {
++    var attempts = 0
++    while (true) {
++        attempts += 1
++        var failure: UpdateChecker.DownloadState.Error? = null
++        UpdateChecker.downloadUpdate(context, nightly).collect { state ->
++            if (state is UpdateChecker.DownloadState.Error) failure = state
++            emit(state)
++        }
++        val error = failure ?: return@flow // downloaded successfully
++        if (!AutoUpdatePolicy.shouldRetryDownload(attempts, error.failure)) return@flow
++        delay(AutoUpdatePolicy.DOWNLOAD_RETRY_DELAY_MS)
++    }
++}
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt
 new file mode 100644
-index 0000000..bbe4c6b
+index 0000000..b3ace2a
 --- /dev/null
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,51 @@
 +package com.jtech.zemer.utils.updater
 +
 +/**
@@ -522,6 +606,23 @@ index 0000000..bbe4c6b
 +     */
 +    fun shouldRecheckOnResume(lastCompletedAtMs: Long, nowMs: Long): Boolean =
 +        lastCompletedAtMs <= 0L || nowMs - lastCompletedAtMs >= RESUME_RECHECK_INTERVAL_MS
++
++    /** Attempts in one download round: the first try plus two retries. */
++    const val MAX_DOWNLOAD_ATTEMPTS = 3
++
++    /** Pause between a failed download attempt and the next one. */
++    const val DOWNLOAD_RETRY_DELAY_MS = 30_000L
++
++    /**
++     * Whether the download is retried after [attempts] failed attempts (1-based).
++     *
++     * A corrupt artifact is never retried: the announced build and the bytes on the wire do not
++     * match, and the same request would fetch the same wrong bytes. Every other failure is worth
++     * another try - a dropped connection or an exhausted heap (a small-RAM device) usually clears
++     * by the time the next attempt starts.
++     */
++    fun shouldRetryDownload(attempts: Int, failure: UpdateDownloadFailure): Boolean =
++        attempts < MAX_DOWNLOAD_ATTEMPTS && failure != UpdateDownloadFailure.CORRUPT_ARTIFACT
 +}
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
 index fe0f7ed..3721b76 100644
@@ -546,6 +647,32 @@ index fe0f7ed..3721b76 100644
  
      /** Every build between [installedSha] and the current one, newest first (the release notes). */
      fun changelogUrl(installedSha: String): String = "$CHANGELOG_URL?since=$installedSha"
+diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailure.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailure.kt
+index dfb88dd..af53337 100644
+--- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailure.kt
++++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailure.kt
+@@ -11,7 +11,9 @@ import javax.net.ssl.SSLException
+  * Why an update download failed, at the granularity the dialog can act on. The raw exception
+  * message (a Ktor timeout carries the full CDN URL) is logged, never shown.
+  */
+-enum class UpdateDownloadFailure { TIMEOUT, NETWORK, STORAGE, CORRUPT_ARTIFACT, UNKNOWN }
++enum class UpdateDownloadFailure {
++    TIMEOUT, NETWORK, STORAGE, CORRUPT_ARTIFACT, MEMORY, UNKNOWN,
++}
+ 
+ /**
+  * The downloaded artifact was not the build that was announced (a nightly whose size or SHA-256
+@@ -27,6 +29,10 @@ fun classifyUpdateDownloadFailure(error: Throwable): UpdateDownloadFailure {
+     return when {
+         chain.any { it.isTimeout() } -> UpdateDownloadFailure.TIMEOUT
+         chain.any { it.isStorage() } -> UpdateDownloadFailure.STORAGE
++        // An exhausted heap: the device ran out of memory mid-transfer (a small-RAM box under
++        // load). Its own bucket, because it is neither a network nor a corrupt-artifact problem -
++        // the very same download succeeds once memory is available again.
++        chain.any { it is OutOfMemoryError } -> UpdateDownloadFailure.MEMORY
+         // Only the dedicated type - never a bare IllegalStateException, which is a common runtime
+         // type an unrelated failure would carry.
+         chain.any { it is CorruptUpdateArtifactException } -> UpdateDownloadFailure.CORRUPT_ARTIFACT
 diff --git a/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt b/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt
 index 65ea6e0..a104970 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt
@@ -561,12 +688,24 @@ index 65ea6e0..a104970 100644
                                      original.copy(Bitmap.Config.ARGB_8888, false)
                                  } else {
                                      original
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index a75b205..433ea65 100755
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -449,6 +449,7 @@
+     <string name="update_error_network">Couldn\'t reach the update server. Check your connection and try again.</string>
+     <string name="update_error_storage">Not enough free storage to save the update.</string>
+     <string name="update_error_corrupt">The downloaded file was incomplete or damaged. Try again.</string>
++    <string name="update_error_memory">Not enough memory to download the update. Close some apps and try again.</string>
+     <string name="update_error_unknown">The download failed. Try again.</string>
+     <string name="donate_amount">Amount</string>
+     <string name="donate_amount_range">Between $%1$d and $%2$d</string>
 diff --git a/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt b/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt
 new file mode 100644
-index 0000000..826d06a
+index 0000000..7c901ac
 --- /dev/null
 +++ b/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,67 @@
 +package com.jtech.zemer.utils.updater
 +
 +import org.junit.Assert.assertFalse
@@ -608,6 +747,31 @@ index 0000000..826d06a
 +            ),
 +        )
 +    }
++
++    @Test
++    fun `a failed download is retried until the attempt budget is spent`() {
++        assertTrue(AutoUpdatePolicy.shouldRetryDownload(1, UpdateDownloadFailure.NETWORK))
++        assertTrue(AutoUpdatePolicy.shouldRetryDownload(1, UpdateDownloadFailure.MEMORY))
++        assertTrue(
++            AutoUpdatePolicy.shouldRetryDownload(
++                AutoUpdatePolicy.MAX_DOWNLOAD_ATTEMPTS - 1,
++                UpdateDownloadFailure.TIMEOUT,
++            ),
++        )
++        assertFalse(
++            AutoUpdatePolicy.shouldRetryDownload(
++                AutoUpdatePolicy.MAX_DOWNLOAD_ATTEMPTS,
++                UpdateDownloadFailure.NETWORK,
++            ),
++        )
++    }
++
++    @Test
++    fun `a corrupt artifact is never retried`() {
++        assertFalse(
++            AutoUpdatePolicy.shouldRetryDownload(1, UpdateDownloadFailure.CORRUPT_ARTIFACT),
++        )
++    }
 +}
 diff --git a/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt b/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt
 index eec65c5..25f0d73 100644
@@ -626,3 +790,26 @@ index eec65c5..25f0d73 100644
              NightlyUpdates.changelogUrl("4a3d242079f43d96ad504683128d425bd583ee3a"),
          )
      }
+diff --git a/app/src/test/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailureTest.kt b/app/src/test/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailureTest.kt
+index 7df52f9..09abbb1 100644
+--- a/app/src/test/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailureTest.kt
++++ b/app/src/test/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailureTest.kt
+@@ -34,6 +34,18 @@ class UpdateDownloadFailureTest {
+         assertEquals(UpdateDownloadFailure.STORAGE, classifyUpdateDownloadFailure(FileNotFoundException("/cache/zemer-update.apk")))
+     }
+ 
++    @Test
++    fun `an exhausted heap is its own failure, not a network one`() {
++        assertEquals(
++            UpdateDownloadFailure.MEMORY,
++            classifyUpdateDownloadFailure(OutOfMemoryError("Failed to allocate a 12 byte allocation")),
++        )
++        assertEquals(
++            UpdateDownloadFailure.MEMORY,
++            classifyUpdateDownloadFailure(IOException("wrapped", OutOfMemoryError("heap"))),
++        )
++    }
++
+     @Test
+     fun `a build that is not what was announced is corrupt`() {
+         assertEquals(
