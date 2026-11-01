@@ -1,8 +1,8 @@
 {
-  "sha": "ed1906c3666767d88acd290b7417e83dc368f2b3",
-  "runNumber": 14,
-  "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]",
-  "size": 14694961,
-  "sha256": "aefbfc08c8e2be7397727d7b72a925f02b7cbd02e66dc627f942004efdee0633",
-  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/aefbfc08c8e2be7397727d7b72a925f02b7cbd02e66dc627f942004efdee0633.apk"
+  "sha": "d79e990e12d3f66f2fcdccd65bc5485ae417904e",
+  "runNumber": 25,
+  "commitMessage": "fix: missing shared storage volume and loudness-off errors (#602)\n\n* fix(download): fail at once when the shared storage volume is missing\n\nOn a device whose primary shared storage volume is missing or unmounted, every\nMediaStore query on it throws. A download then logged an error looking for an\nexisting file, fetched the whole song four times, failed every save, and\nreported again.\n\nCheck the volume first: the existing-file lookup returns nothing, and a download\nwhose save needs the volume fails at once with a warning, without fetching.\nAn audio download to a custom folder does not use the volume and still runs.\n\n* fix(player): treat a failure to turn loudness off as a device limitation\n\nSome audio effect engines throw when the loudness enhancer is turned off, as\nthey do when it is turned on. Turning it off now disables loudness for the\nsession like the other enhancer calls, instead of reporting the error.\n\nNo unit test: the failure is in the platform AudioEffect, which needs\nframework infrastructure the project does not have.\n\n* fix(download): check storage inside the error path, for the rendition actually saved",
+  "size": 11520873,
+  "sha256": "89db7b5cef4fd30b08f062fe05b0f1077559ed18d6201fe5fe9506db6fd14fc8",
+  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/89db7b5cef4fd30b08f062fe05b0f1077559ed18d6201fe5fe9506db6fd14fc8.apk"
 }
