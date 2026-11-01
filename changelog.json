@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "sha": "b09189b0f2c7a5543b120372319f9eeb8cdc4459",
+      "runNumber": 26,
+      "commitMessage": "fix: copy the link when the system fails to open it (#605)"
+    },
+    {
       "sha": "d79e990e12d3f66f2fcdccd65bc5485ae417904e",
       "runNumber": 25,
       "commitMessage": "fix: missing shared storage volume and loudness-off errors (#602)"
