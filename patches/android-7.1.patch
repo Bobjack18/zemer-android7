@@ -1,17 +1,17 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index b5d71f2..4abbb3a 100644
+index d7ddd136..7cd92a26 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
-@@ -20,7 +20,7 @@ android {
+@@ -79,7 +79,7 @@ android {
  
      defaultConfig {
          applicationId = "com.jtech.zemer"
 -        minSdk = 26
 +        minSdk = 25
          targetSdk = 36
-         versionCode = 38
-         versionName = "38"
-@@ -70,6 +70,9 @@ android {
+         versionCode = 39
+         versionName = "39"
+@@ -128,6 +128,9 @@ android {
              storePassword = "android"
              keyAlias = "androiddebugkey"
              keyPassword = "android"
@@ -21,7 +21,7 @@ index b5d71f2..4abbb3a 100644
          }
          create("release") {
              storeFile = file("keystore/release.keystore")
-@@ -77,6 +80,8 @@ android {
+@@ -135,6 +138,8 @@ android {
              keyAlias = System.getenv("KEY_ALIAS")
              keyPassword = System.getenv("KEY_PASSWORD")
              storeType = "PKCS12"
@@ -31,7 +31,7 @@ index b5d71f2..4abbb3a 100644
          getByName("debug") {
              keyAlias = "androiddebugkey"
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 4610bca..ee60e37 100755
+index 4610bca6..ee60e378 100755
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -31,8 +31,9 @@
@@ -47,12 +47,13 @@ index 4610bca..ee60e37 100755
      <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
  
 diff --git a/app/src/main/kotlin/com/jtech/zemer/App.kt b/app/src/main/kotlin/com/jtech/zemer/App.kt
-index 2d800a8..0ce9590 100644
+index 9f4c69cd..7c90521c 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/App.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/App.kt
-@@ -1,10 +1,12 @@
+@@ -1,11 +1,12 @@
  package com.jtech.zemer
  
+-import com.jtech.zemer.net.ZemerHeaders.withZemerHeaders
 +import android.app.Activity
  import android.app.Application
  import android.app.NotificationChannel
@@ -63,7 +64,15 @@ index 2d800a8..0ce9590 100644
  import android.util.Log
  import android.webkit.CookieManager
  import androidx.datastore.preferences.core.edit
-@@ -45,6 +47,7 @@ import com.jtech.zemer.utils.dataStore
+@@ -30,6 +31,7 @@ import com.jtech.zemer.constants.*
+ import com.jtech.zemer.di.ApplicationScope
+ import com.jtech.zemer.extensions.toast
+ import com.jtech.zemer.crash.CrashReporter
++import com.jtech.zemer.net.ZemerHeaders.withZemerHeaders
+ import com.jtech.zemer.utils.ContentFilterConfig
+ import com.jtech.zemer.utils.CrashReportingTree
+ import com.jtech.zemer.utils.BlockedIdsCache
+@@ -46,6 +48,7 @@ import com.jtech.zemer.utils.dataStore
  import com.jtech.zemer.utils.get
  import com.jtech.zemer.utils.reportException
  import com.jtech.zemer.utils.WhitelistFetcher
@@ -71,7 +80,7 @@ index 2d800a8..0ce9590 100644
  import com.metrolist.innertube.utils.ResilientDns
  import com.metrolist.innertube.utils.parseCookieString
  import dagger.hilt.android.HiltAndroidApp
-@@ -75,23 +78,38 @@ class App : Application(), SingletonImageLoader.Factory {
+@@ -76,6 +79,14 @@ class App : Application(), SingletonImageLoader.Factory {
      @Inject
      lateinit var databaseLazy: dagger.Lazy<MusicDatabase>
  
@@ -86,42 +95,7 @@ index 2d800a8..0ce9590 100644
      override fun onCreate() {
          super.onCreate()
  
-         // Initialize Timber for logging. The Crashlytics tree runs in all builds:
-         // every DEBUG+ log becomes a crash-report breadcrumb, ERROR throwables become
--        // non-fatal issues.
--        Timber.plant(
--            CrashReportingTree(
--                logBreadcrumb = { FirebaseCrashlytics.getInstance().log(it) },
--                recordNonFatal = { FirebaseCrashlytics.getInstance().recordException(it) },
-+        // non-fatal issues. Crashlytics needs a live FirebaseApp; on devices without real
-+        // Google Play services (microG, de-Googled ROMs) that can be unavailable, and a
-+        // missing reporter must never take the app down at startup.
-+        val crashlytics = runCatching { FirebaseCrashlytics.getInstance() }.getOrNull()
-+        if (crashlytics != null) {
-+            Timber.plant(
-+                CrashReportingTree(
-+                    logBreadcrumb = { crashlytics.log(it) },
-+                    recordNonFatal = { crashlytics.recordException(it) },
-+                )
-             )
--        )
--        // Every main build ships as the same versionCode/versionName (nightly = stable's number), so
--        // Crashlytics buckets nightly and stable together; the commit + CI run number keys are what
--        // tell them apart (run number 0 = built outside CI).
--        FirebaseCrashlytics.getInstance().setCustomKey("commit", BuildConfig.COMMIT_HASH)
--        FirebaseCrashlytics.getInstance().setCustomKey("run_number", BuildConfig.RUN_NUMBER)
-+            // Every main build ships as the same versionCode/versionName (nightly = stable's number), so
-+            // Crashlytics buckets nightly and stable together; the commit + CI run number keys are what
-+            // tell them apart (run number 0 = built outside CI).
-+            crashlytics.setCustomKey("commit", BuildConfig.COMMIT_HASH)
-+            crashlytics.setCustomKey("run_number", BuildConfig.RUN_NUMBER)
-+        } else {
-+            Timber.w("Crashlytics unavailable; continuing without crash reporting")
-+        }
-         if (BuildConfig.DEBUG) {
-             Timber.plant(Timber.DebugTree())
-             // Ring-buffer tree for the developer-mode Log viewer. Debug builds ONLY —
-@@ -194,18 +212,80 @@ class App : Application(), SingletonImageLoader.Factory {
+@@ -191,18 +202,80 @@ class App : Application(), SingletonImageLoader.Factory {
                  Timber.d("App: IsraeliArtistRegistry pre-loaded")
              }
          }
@@ -208,10 +182,10 @@ index 2d800a8..0ce9590 100644
      }
  
 diff --git a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
-index df719bc..c413aa9 100644
+index ab438343..6df9f853 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
-@@ -949,22 +949,23 @@ class MainActivity : ComponentActivity() {
+@@ -901,22 +901,23 @@ class MainActivity : ComponentActivity() {
                                  pendingUpdateNotes = update.notes
                                  pendingUpdateIsNightly = update.isNightly
                                  if (update.isNightly) {
@@ -251,7 +225,7 @@ index df719bc..c413aa9 100644
                                      }
                                  } else {
                                      showUpdateDialog = true
-@@ -1005,10 +1006,14 @@ class MainActivity : ComponentActivity() {
+@@ -957,10 +958,14 @@ class MainActivity : ComponentActivity() {
                                  onDownload = {
                                      downloadState = com.jtech.zemer.utils.UpdateChecker.DownloadState.Downloading(0f)
                                      installError = null
@@ -270,7 +244,7 @@ index df719bc..c413aa9 100644
                                  },
                                  onCancelDownload = {
 diff --git a/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt b/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt
-index 27c63e7..15a8327 100644
+index 27c63e7e..15a83278 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/ResumePlaybackActivity.kt
 @@ -17,9 +17,13 @@ class ResumePlaybackActivity : Activity() {
@@ -291,10 +265,10 @@ index 27c63e7..15a8327 100644
      }
  }
 diff --git a/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt b/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
-index 8ae74c9..504873e 100644
+index 59ccacfe..2e22adfe 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
-@@ -172,7 +172,14 @@ fun Context.isInternetConnected(): Boolean {
+@@ -185,7 +185,14 @@ fun Context.isInternetConnected(): Boolean {
              return false
          }
  
@@ -311,7 +285,7 @@ index 8ae74c9..504873e 100644
          return try {
              val socket = java.net.Socket()
 diff --git a/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt b/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
-index f3011a1..5a2b629 100644
+index f3011a1c..5a2b6291 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
 @@ -61,7 +61,7 @@ class MediaStoreDownloadService : Service() {
@@ -332,7 +306,7 @@ index f3011a1..5a2b629 100644
              NOTIFICATION_CHANNEL_ID,
              getString(R.string.download_channel_name),
 diff --git a/app/src/main/kotlin/com/jtech/zemer/playback/MusicService.kt b/app/src/main/kotlin/com/jtech/zemer/playback/MusicService.kt
-index dc226d1..2fbbfc6 100644
+index 963bfc72..4b937e88 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/playback/MusicService.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/playback/MusicService.kt
 @@ -350,6 +350,10 @@ class MusicService :
@@ -346,7 +320,7 @@ index dc226d1..2fbbfc6 100644
      private var lastAudioFocusState = AudioManager.AUDIOFOCUS_NONE
      private var wasPlayingBeforeAudioFocusLoss = false
      private var hasAudioFocus = false
-@@ -831,6 +835,13 @@ class MusicService :
+@@ -839,6 +843,13 @@ class MusicService :
      }
  
      private fun setupAudioFocusRequest() {
@@ -360,7 +334,7 @@ index dc226d1..2fbbfc6 100644
          audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
              .setAudioAttributes(
                  android.media.AudioAttributes.Builder()
-@@ -924,12 +935,16 @@ class MusicService :
+@@ -932,12 +943,16 @@ class MusicService :
      private fun requestAudioFocus(): Boolean {
          if (hasAudioFocus) return true
  
@@ -382,7 +356,7 @@ index dc226d1..2fbbfc6 100644
      }
  
      private fun abandonAudioFocus() {
-@@ -937,8 +952,15 @@ class MusicService :
+@@ -945,8 +960,15 @@ class MusicService :
          // clears the flag before calling this, so a guard on hasAudioFocus would skip the actual
          // abandon and leak the request + listener for the service's life. Abandoning a request we do
          // not hold is a harmless no-op on the framework side.
@@ -401,7 +375,7 @@ index dc226d1..2fbbfc6 100644
          hasAudioFocus = false
      }
 diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/component/UpdateDownloadDialog.kt b/app/src/main/kotlin/com/jtech/zemer/ui/component/UpdateDownloadDialog.kt
-index 3fea872..c8c5737 100644
+index 3fea8721..c8c57373 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/ui/component/UpdateDownloadDialog.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/ui/component/UpdateDownloadDialog.kt
 @@ -263,5 +263,6 @@ private fun UpdateDownloadFailure.messageRes(): Int = when (this) {
@@ -412,7 +386,7 @@ index 3fea872..c8c5737 100644
      UpdateDownloadFailure.UNKNOWN -> R.string.update_error_unknown
  }
 diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt b/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt
-index 3a07e1d..37208cc 100644
+index 3a07e1d9..37208cc2 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/ui/player/VideoPip.kt
 @@ -6,6 +6,8 @@ import android.content.pm.PackageManager
@@ -447,7 +421,7 @@ index 3a07e1d..37208cc 100644
      var inPip by remember(activity) { mutableStateOf(activity.isInPictureInPictureMode) }
      DisposableEffect(activity) {
 diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/ThemeScreen.kt b/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/ThemeScreen.kt
-index f89de26..a7c5986 100644
+index f89de269..a7c59867 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/ThemeScreen.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/ThemeScreen.kt
 @@ -419,7 +419,7 @@ private fun PaletteItem(
@@ -460,7 +434,7 @@ index f89de26..a7c5986 100644
      } else {
          rememberDynamicColorScheme(
 diff --git a/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/UpdaterSettings.kt b/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/UpdaterSettings.kt
-index d2ea63f..620cc81 100644
+index 21d5dbbb..dfbeedef 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/UpdaterSettings.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/ui/screens/settings/UpdaterSettings.kt
 @@ -78,7 +78,7 @@ fun UpdaterScreen(
@@ -473,7 +447,7 @@ index d2ea63f..620cc81 100644
      val (installerTypeOrdinal, onInstallerTypeChange) = rememberPreference(InstallerTypeKey, InstallerType.NATIVE.ordinal)
      val installerType = InstallerType.fromOrdinal(installerTypeOrdinal)
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt b/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
-index 8f95857..b9d93b8 100644
+index 8f958570..b9d93b8f 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/UpdateChecker.kt
 @@ -23,8 +23,6 @@ import kotlinx.serialization.json.jsonPrimitive
@@ -510,7 +484,7 @@ index 8f95857..b9d93b8 100644
              Timber.w(e, "Update download failed")
              emit(DownloadState.Error(e.message ?: "Download failed", classifyUpdateDownloadFailure(e)))
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
-index ba4c06c..40372c6 100644
+index ba4c06c7..40372c6f 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
 @@ -195,6 +195,10 @@ object AppInstaller {
@@ -526,7 +500,7 @@ index ba4c06c..40372c6 100644
          }
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdateDownload.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdateDownload.kt
 new file mode 100644
-index 0000000..9e56a86
+index 00000000..9e56a863
 --- /dev/null
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdateDownload.kt
 @@ -0,0 +1,37 @@
@@ -569,7 +543,7 @@ index 0000000..9e56a86
 +}
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt
 new file mode 100644
-index 0000000..b3ace2a
+index 00000000..b3ace2ae
 --- /dev/null
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicy.kt
 @@ -0,0 +1,51 @@
@@ -625,7 +599,7 @@ index 0000000..b3ace2a
 +        attempts < MAX_DOWNLOAD_ATTEMPTS && failure != UpdateDownloadFailure.CORRUPT_ARTIFACT
 +}
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
-index fe0f7ed..3721b76 100644
+index fe0f7ed4..3721b760 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/NightlyUpdates.kt
 @@ -19,10 +19,15 @@ import kotlinx.serialization.json.longOrNull
@@ -648,7 +622,7 @@ index fe0f7ed..3721b76 100644
      /** Every build between [installedSha] and the current one, newest first (the release notes). */
      fun changelogUrl(installedSha: String): String = "$CHANGELOG_URL?since=$installedSha"
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailure.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailure.kt
-index dfb88dd..af53337 100644
+index dfb88ddb..af533370 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailure.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailure.kt
 @@ -11,7 +11,9 @@ import javax.net.ssl.SSLException
@@ -674,7 +648,7 @@ index dfb88dd..af53337 100644
          // type an unrelated failure would carry.
          chain.any { it is CorruptUpdateArtifactException } -> UpdateDownloadFailure.CORRUPT_ARTIFACT
 diff --git a/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt b/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt
-index 65ea6e0..a104970 100644
+index 65ea6e08..a1049705 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/widget/MusicWidget.kt
 @@ -355,7 +355,9 @@ class MusicWidget : GlanceAppWidget() {
@@ -689,10 +663,10 @@ index 65ea6e0..a104970 100644
                                  } else {
                                      original
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index a75b205..433ea65 100755
+index ce413f75..a794210e 100755
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -449,6 +449,7 @@
+@@ -450,6 +450,7 @@
      <string name="update_error_network">Couldn\'t reach the update server. Check your connection and try again.</string>
      <string name="update_error_storage">Not enough free storage to save the update.</string>
      <string name="update_error_corrupt">The downloaded file was incomplete or damaged. Try again.</string>
@@ -702,7 +676,7 @@ index a75b205..433ea65 100755
      <string name="donate_amount_range">Between $%1$d and $%2$d</string>
 diff --git a/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt b/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt
 new file mode 100644
-index 0000000..7c901ac
+index 00000000..7c901aca
 --- /dev/null
 +++ b/app/src/test/kotlin/com/jtech/zemer/utils/updater/AutoUpdatePolicyTest.kt
 @@ -0,0 +1,67 @@
@@ -774,7 +748,7 @@ index 0000000..7c901ac
 +    }
 +}
 diff --git a/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt b/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt
-index eec65c5..25f0d73 100644
+index eec65c53..25f0d73b 100644
 --- a/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt
 +++ b/app/src/test/kotlin/com/jtech/zemer/utils/updater/NightlyUpdatesTest.kt
 @@ -176,8 +176,11 @@ class NightlyUpdatesTest {
@@ -791,7 +765,7 @@ index eec65c5..25f0d73 100644
          )
      }
 diff --git a/app/src/test/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailureTest.kt b/app/src/test/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailureTest.kt
-index 7df52f9..09abbb1 100644
+index 7df52f94..09abbb12 100644
 --- a/app/src/test/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailureTest.kt
 +++ b/app/src/test/kotlin/com/jtech/zemer/utils/updater/UpdateDownloadFailureTest.kt
 @@ -34,6 +34,18 @@ class UpdateDownloadFailureTest {

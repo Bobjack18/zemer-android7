@@ -67,7 +67,9 @@ jobs:
         if: steps.up.outputs.skip == 'false'
         run: |
           set -euo pipefail
-          git clone --filter=blob:none https://github.com/zemerteam/zemer-app.git src
+          # Full clone (no --filter/--depth): `git apply -3` falls back to a 3-way merge and needs
+          # the patch's pre-image blobs, which a blobless/partial clone does not have on disk.
+          git clone https://github.com/zemerteam/zemer-app.git src
           git -C src checkout --detach "${{ steps.up.outputs.sha }}"
           git -C src submodule update --init --recursive
           git -C src config user.name "zemer-android7"
@@ -81,7 +83,9 @@ jobs:
         run: |
           set -euo pipefail
           cd src
-          git apply -3 --whitespace=nowarn ../build/patches/android-7.1.patch
+          # Exact apply first; if upstream drifted, retry as a 3-way merge (the clone is complete).
+          git apply --whitespace=nowarn ../build/patches/android-7.1.patch \
+            || git apply -3 --whitespace=nowarn ../build/patches/android-7.1.patch
           git add -A
           git commit -q -m "android7: port upstream ${{ steps.up.outputs.sha }}"
           echo "BUILT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
