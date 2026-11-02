@@ -1,17 +1,17 @@
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index d7ddd136..7cd92a26 100644
+index 9c48e6fd..db579054 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
-@@ -79,7 +79,7 @@ android {
+@@ -105,7 +105,7 @@ android {
  
      defaultConfig {
          applicationId = "com.jtech.zemer"
 -        minSdk = 26
 +        minSdk = 25
          targetSdk = 36
-         versionCode = 39
-         versionName = "39"
-@@ -128,6 +128,9 @@ android {
+         versionCode = 41
+         versionName = "41"
+@@ -154,6 +154,9 @@ android {
              storePassword = "android"
              keyAlias = "androiddebugkey"
              keyPassword = "android"
@@ -20,8 +20,8 @@ index d7ddd136..7cd92a26 100644
 +            enableV2Signing = true
          }
          create("release") {
-             storeFile = file("keystore/release.keystore")
-@@ -135,6 +138,8 @@ android {
+             storeFile = releaseKeystore
+@@ -161,6 +164,8 @@ android {
              keyAlias = System.getenv("KEY_ALIAS")
              keyPassword = System.getenv("KEY_PASSWORD")
              storeType = "PKCS12"
@@ -31,7 +31,7 @@ index d7ddd136..7cd92a26 100644
          getByName("debug") {
              keyAlias = "androiddebugkey"
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 4610bca6..ee60e378 100755
+index 4381f5dc..46289547 100755
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -31,8 +31,9 @@
@@ -47,7 +47,7 @@ index 4610bca6..ee60e378 100755
      <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
  
 diff --git a/app/src/main/kotlin/com/jtech/zemer/App.kt b/app/src/main/kotlin/com/jtech/zemer/App.kt
-index 9f4c69cd..7c90521c 100644
+index 4daaa976..c98474b8 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/App.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/App.kt
 @@ -1,11 +1,12 @@
@@ -64,15 +64,15 @@ index 9f4c69cd..7c90521c 100644
  import android.util.Log
  import android.webkit.CookieManager
  import androidx.datastore.preferences.core.edit
-@@ -30,6 +31,7 @@ import com.jtech.zemer.constants.*
- import com.jtech.zemer.di.ApplicationScope
- import com.jtech.zemer.extensions.toast
- import com.jtech.zemer.crash.CrashReporter
+@@ -34,6 +35,7 @@ import com.jtech.zemer.net.EnvSignals
+ import com.jtech.zemer.legal.LegalRepository
+ import com.jtech.zemer.sig.InstallRegistration
+ import com.jtech.zemer.sig.NativeSig
 +import com.jtech.zemer.net.ZemerHeaders.withZemerHeaders
  import com.jtech.zemer.utils.ContentFilterConfig
  import com.jtech.zemer.utils.CrashReportingTree
  import com.jtech.zemer.utils.BlockedIdsCache
-@@ -46,6 +48,7 @@ import com.jtech.zemer.utils.dataStore
+@@ -50,6 +52,7 @@ import com.jtech.zemer.utils.dataStore
  import com.jtech.zemer.utils.get
  import com.jtech.zemer.utils.reportException
  import com.jtech.zemer.utils.WhitelistFetcher
@@ -80,7 +80,7 @@ index 9f4c69cd..7c90521c 100644
  import com.metrolist.innertube.utils.ResilientDns
  import com.metrolist.innertube.utils.parseCookieString
  import dagger.hilt.android.HiltAndroidApp
-@@ -76,6 +79,14 @@ class App : Application(), SingletonImageLoader.Factory {
+@@ -80,6 +83,14 @@ class App : Application(), SingletonImageLoader.Factory {
      @Inject
      lateinit var databaseLazy: dagger.Lazy<MusicDatabase>
  
@@ -94,8 +94,8 @@ index 9f4c69cd..7c90521c 100644
 +
      override fun onCreate() {
          super.onCreate()
- 
-@@ -191,18 +202,80 @@ class App : Application(), SingletonImageLoader.Factory {
+         // before any request to a Zemer server is signed (the crash reporter's uploads included)
+@@ -206,18 +217,80 @@ class App : Application(), SingletonImageLoader.Factory {
                  Timber.d("App: IsraeliArtistRegistry pre-loaded")
              }
          }
@@ -182,10 +182,10 @@ index 9f4c69cd..7c90521c 100644
      }
  
 diff --git a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
-index ab438343..6df9f853 100644
+index 1090c82f..680afd16 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/MainActivity.kt
-@@ -901,22 +901,23 @@ class MainActivity : ComponentActivity() {
+@@ -916,22 +916,23 @@ class MainActivity : ComponentActivity() {
                                  pendingUpdateNotes = update.notes
                                  pendingUpdateIsNightly = update.isNightly
                                  if (update.isNightly) {
@@ -225,7 +225,7 @@ index ab438343..6df9f853 100644
                                      }
                                  } else {
                                      showUpdateDialog = true
-@@ -957,10 +958,14 @@ class MainActivity : ComponentActivity() {
+@@ -972,10 +973,14 @@ class MainActivity : ComponentActivity() {
                                  onDownload = {
                                      downloadState = com.jtech.zemer.utils.UpdateChecker.DownloadState.Downloading(0f)
                                      installError = null
@@ -265,10 +265,10 @@ index 27c63e7e..15a83278 100644
      }
  }
 diff --git a/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt b/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
-index 59ccacfe..2e22adfe 100644
+index 3eb4c388..37b03bbe 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/extensions/ContextExt.kt
-@@ -185,7 +185,14 @@ fun Context.isInternetConnected(): Boolean {
+@@ -186,7 +186,14 @@ fun Context.isInternetConnected(): Boolean {
              return false
          }
  
@@ -285,7 +285,7 @@ index 59ccacfe..2e22adfe 100644
          return try {
              val socket = java.net.Socket()
 diff --git a/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt b/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
-index f3011a1c..5a2b6291 100644
+index de03aa9d..68784bb4 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/playback/MediaStoreDownloadService.kt
 @@ -61,7 +61,7 @@ class MediaStoreDownloadService : Service() {
@@ -297,7 +297,7 @@ index f3011a1c..5a2b6291 100644
                  .onFailure { Timber.e(it, "Failed to start MediaStoreDownloadService") }
          }
      }
-@@ -147,6 +147,7 @@ class MediaStoreDownloadService : Service() {
+@@ -157,6 +157,7 @@ class MediaStoreDownloadService : Service() {
      }
  
      private fun createNotificationChannel() {
@@ -484,10 +484,10 @@ index 8f958570..b9d93b8f 100644
              Timber.w(e, "Update download failed")
              emit(DownloadState.Error(e.message ?: "Download failed", classifyUpdateDownloadFailure(e)))
 diff --git a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
-index ba4c06c7..40372c6f 100644
+index 613db2f7..cc1ad582 100644
 --- a/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
 +++ b/app/src/main/kotlin/com/jtech/zemer/utils/updater/AppInstaller.kt
-@@ -195,6 +195,10 @@ object AppInstaller {
+@@ -200,6 +200,10 @@ object AppInstaller {
  
      /** Shizuku install through the hidden PackageInstaller APIs (rikka refine). */
      private fun installShizuku(context: Context, apkFile: File): InstallResult {
@@ -663,10 +663,10 @@ index 65ea6e08..a1049705 100644
                                  } else {
                                      original
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index ce413f75..a794210e 100755
+index 7193929f..177daad6 100755
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -450,6 +450,7 @@
+@@ -451,6 +451,7 @@
      <string name="update_error_network">Couldn\'t reach the update server. Check your connection and try again.</string>
      <string name="update_error_storage">Not enough free storage to save the update.</string>
      <string name="update_error_corrupt">The downloaded file was incomplete or damaged. Try again.</string>

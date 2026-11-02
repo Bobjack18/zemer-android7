@@ -83,9 +83,18 @@ jobs:
         run: |
           set -euo pipefail
           cd src
-          # Exact apply first; if upstream drifted, retry as a 3-way merge (the clone is complete).
-          git apply --whitespace=nowarn ../build/patches/android-7.1.patch \
-            || git apply -3 --whitespace=nowarn ../build/patches/android-7.1.patch
+          # Exact apply first. If upstream drifted, retry as a 3-way merge (the clone is complete),
+          # then let the import-only resolver settle the one conflict class that recurs: our port adds
+          # imports to files whose import list upstream also edits.
+          if ! git apply --whitespace=nowarn ../build/patches/android-7.1.patch; then
+            echo "exact apply failed - retrying as a 3-way merge"
+            git apply -3 --whitespace=nowarn ../build/patches/android-7.1.patch || true
+            python3 ../build/scripts/resolve-import-conflicts.py
+          fi
+          if grep -rn '^<<<<<<< ' --include='*.kt' --include='*.java' --include='*.xml' app; then
+            echo "::error::Conflicts survived the port apply - rebase patches/android-7.1.patch onto upstream."
+            exit 1
+          fi
           git add -A
           git commit -q -m "android7: port upstream ${{ steps.up.outputs.sha }}"
           echo "BUILT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
