@@ -136,6 +136,9 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # Optional: the request-signing master. Without it the build compiles
+          # out the signer (ZEMER_SIG_SKIP) and every Zemer API call is unsigned.
+          ZEMER_SIG_MASTER: ${{ secrets.ZEMER_SIG_MASTER }}
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleRelease --no-daemon --stacktrace
@@ -149,6 +152,12 @@ jobs:
           test -f "$APK"
           BUILD_TOOLS=$(ls -d "$ANDROID_SDK_ROOT"/build-tools/* | sort -V | tail -1)
           "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" > /dev/null
+          # The request signer only ships when ZEMER_SIG_MASTER is configured.
+          if unzip -l "$APK" | grep -q 'lib/.*/libzemersig\.so'; then
+            echo "REQUEST SIGNER: libzemersig.so present"
+          else
+            echo "REQUEST SIGNER: MISSING (ZEMER_SIG_MASTER secret is not set)"
+          fi
           {
             echo "APK=$APK"
             echo "APK_SIZE=$(stat -c%s "$APK")"
