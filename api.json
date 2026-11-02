@@ -1,8 +1,8 @@
 {
-  "sha": "b09189b0f2c7a5543b120372319f9eeb8cdc4459",
-  "runNumber": 26,
-  "commitMessage": "fix: copy the link when the system fails to open it (#605)\n\nSome filtered ROMs resolve a link to a broken handler, and the system\nthrows a NullPointerException back into the app instead of\nActivityNotFoundException. openUrlOrCopy now falls back to copying the\nlink on any failure to start the activity.",
-  "size": 11520871,
-  "sha256": "a4f2965b597c08b058c93b6278768e2a872f7c52cf099b06a92e42c74bd36479",
-  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/a4f2965b597c08b058c93b6278768e2a872f7c52cf099b06a92e42c74bd36479.apk"
+  "sha": "0b8a8509f1f4d0e2d888c86461f048e99d773cce",
+  "runNumber": 31,
+  "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]",
+  "size": 11654504,
+  "sha256": "b31292182d7fae3d22d7c3c2f90115c47a832e345318bf74b58f619752b03db4",
+  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/b31292182d7fae3d22d7c3c2f90115c47a832e345318bf74b58f619752b03db4.apk"
 }
