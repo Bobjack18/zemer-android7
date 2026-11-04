@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "sha": "6ebca90e93b3d9f4179b5d71219e991de6683f63",
+      "runNumber": 35,
+      "commitMessage": "fix: never crash on a missing settings screen or an opaque shared link (#633)"
+    },
+    {
       "sha": "0b8a8509f1f4d0e2d888c86461f048e99d773cce",
       "runNumber": 31,
       "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]"

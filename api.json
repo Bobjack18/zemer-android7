@@ -1,8 +1,8 @@
 {
-  "sha": "0b8a8509f1f4d0e2d888c86461f048e99d773cce",
-  "runNumber": 31,
-  "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]",
-  "size": 11654504,
-  "sha256": "b31292182d7fae3d22d7c3c2f90115c47a832e345318bf74b58f619752b03db4",
-  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/b31292182d7fae3d22d7c3c2f90115c47a832e345318bf74b58f619752b03db4.apk"
+  "sha": "6ebca90e93b3d9f4179b5d71219e991de6683f63",
+  "runNumber": 35,
+  "commitMessage": "fix: never crash on a missing settings screen or an opaque shared link (#633)",
+  "size": 11654629,
+  "sha256": "8a3e7f28ece88f1ec36066d1f01254f7dfe2f64d3a80a4da2a276cfc9dbb7d76",
+  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/8a3e7f28ece88f1ec36066d1f01254f7dfe2f64d3a80a4da2a276cfc9dbb7d76.apk"
 }
