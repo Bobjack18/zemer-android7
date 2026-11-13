@@ -1,8 +1,8 @@
 {
-  "sha": "7f18dedf2fbe86c0c1be0d9c346f83deff815bea",
-  "runNumber": 53,
-  "commitMessage": "fix(onboarding): ask for the display density before the terms (#634)",
-  "size": 11654350,
-  "sha256": "efa563a2e5c076495b488e9b2cccfedf324774c53f99664984a965c29f86dae2",
-  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/efa563a2e5c076495b488e9b2cccfedf324774c53f99664984a965c29f86dae2.apk"
+  "sha": "198b63ebcf0cd8cdc1d6cecedf8f9b422c3602f7",
+  "runNumber": 54,
+  "commitMessage": "fix: crash batch 11 (double-tap navigate, corrupt settings, restore over the open database, cache holes) (#637)",
+  "size": 11654359,
+  "sha256": "9e299c3456adb45a2eee7a4623bfef40b57a95b0e274f84b53549214a08f8ae8",
+  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/9e299c3456adb45a2eee7a4623bfef40b57a95b0e274f84b53549214a08f8ae8.apk"
 }
