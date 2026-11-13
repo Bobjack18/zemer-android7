@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "sha": "3e176dd944891cbdd646550d8211947a66acf434",
+      "runNumber": 55,
+      "commitMessage": "fix(download): answer every download service start with startForeground (#638)"
+    },
+    {
       "sha": "198b63ebcf0cd8cdc1d6cecedf8f9b422c3602f7",
       "runNumber": 54,
       "commitMessage": "fix: crash batch 11 (double-tap navigate, corrupt settings, restore over the open database, cache holes) (#637)"
