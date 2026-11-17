@@ -1,8 +1,8 @@
 {
-  "sha": "945c00f0cc07014990c8c261d87a3d83597fc493",
-  "runNumber": 62,
-  "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]",
-  "size": 11654363,
-  "sha256": "36dab8cc4c1a9ea122de4dd2b7e73102c02ec3e81fc662bef901d03bbc1d6000",
-  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/36dab8cc4c1a9ea122de4dd2b7e73102c02ec3e81fc662bef901d03bbc1d6000.apk"
+  "sha": "0dec60158d0cab12c5a3ac50d95046ba9251fd55",
+  "runNumber": 63,
+  "commitMessage": "fix(player): report unparseable media only when the refetch did not answer it (#646)",
+  "size": 11654362,
+  "sha256": "2020adc1762a647a8ed21c601fb228aa6831468d47a6b5198a85047d9581a302",
+  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/2020adc1762a647a8ed21c601fb228aa6831468d47a6b5198a85047d9581a302.apk"
 }
