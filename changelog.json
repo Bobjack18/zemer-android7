@@ -1,6 +1,11 @@
 {
   "entries": [
     {
+      "sha": "e7d85019d538e079a12bf9dc7b3e1ef0959b22c9",
+      "runNumber": 64,
+      "commitMessage": "fix(queue): delete the selected songs by identity, not by their old positions (#648)"
+    },
+    {
       "sha": "0dec60158d0cab12c5a3ac50d95046ba9251fd55",
       "runNumber": 63,
       "commitMessage": "fix(player): report unparseable media only when the refetch did not answer it (#646)"

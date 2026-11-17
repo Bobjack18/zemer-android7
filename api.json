@@ -1,8 +1,8 @@
 {
-  "sha": "0dec60158d0cab12c5a3ac50d95046ba9251fd55",
-  "runNumber": 63,
-  "commitMessage": "fix(player): report unparseable media only when the refetch did not answer it (#646)",
-  "size": 11654362,
-  "sha256": "2020adc1762a647a8ed21c601fb228aa6831468d47a6b5198a85047d9581a302",
-  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/2020adc1762a647a8ed21c601fb228aa6831468d47a6b5198a85047d9581a302.apk"
+  "sha": "e7d85019d538e079a12bf9dc7b3e1ef0959b22c9",
+  "runNumber": 64,
+  "commitMessage": "fix(queue): delete the selected songs by identity, not by their old positions (#648)",
+  "size": 11654367,
+  "sha256": "2748d5c6edf7978f09afc918466b0c32262f525ff2418bb96f21f634294b0443",
+  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/2748d5c6edf7978f09afc918466b0c32262f525ff2418bb96f21f634294b0443.apk"
 }
