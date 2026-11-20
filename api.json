@@ -1,8 +1,8 @@
 {
-  "sha": "e7d85019d538e079a12bf9dc7b3e1ef0959b22c9",
-  "runNumber": 64,
-  "commitMessage": "fix(queue): delete the selected songs by identity, not by their old positions (#648)",
-  "size": 11654367,
-  "sha256": "2748d5c6edf7978f09afc918466b0c32262f525ff2418bb96f21f634294b0443",
-  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/2748d5c6edf7978f09afc918466b0c32262f525ff2418bb96f21f634294b0443.apk"
+  "sha": "de605cdb1f41e306bde16bf43f735b0ec277aa5f",
+  "runNumber": 70,
+  "commitMessage": "docs: auto-regenerate code-derived docs [skip ci]",
+  "size": 11654363,
+  "sha256": "cb57d0375183edaf48b5fc8585802bcef99e25419af4024f324daea9f15aeaf3",
+  "downloadUrl": "https://raw.githubusercontent.com/Bobjack18/zemer-android7/apk/cb57d0375183edaf48b5fc8585802bcef99e25419af4024f324daea9f15aeaf3.apk"
 }
